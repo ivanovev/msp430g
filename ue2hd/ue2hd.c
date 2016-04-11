@@ -4,22 +4,24 @@
 #include "ue2hd.h"
 #include <stdint.h>
 
-#define NUM_OF_BYTE 8
+#define NUM_OF_BYTE 0x1F
 
 void i2c_init(void)
 {
     _DINT();
     //P1OUT &= ~(SDA_PIN + SCL_PIN);
-    P1REN |= (SDA_PIN + SCL_PIN);
+    //P1REN |= (SDA_PIN + SCL_PIN);
     USICTL0 = USIPE6+USIPE7+USISWRST;    // Port & USI mode setup
-    USICTL1 = USII2C+USIIE;     // Enable I2C mode & USI interrupts
+    USICTL1 = USII2C+USISTTIE;     // Enable I2C mode & USI interrupts
     USICKCTL = USICKPL;                  // Setup clock polarity
-    USICNT |= USIIFGCC;                  // Disable automatic clear control
+    USICNT |= USISCLREL;  // Disable automatic clear control
     USICTL0 &= ~USISWRST;                // Enable USI
     USICTL1 &= ~USIIFG;                  // Clear pending flag
     _EINT();
     USICTL0 &= ~USIOE;
     USICNT = (USICNT & 0xE0) + NUM_OF_BYTE;
+    USISRL = 0;
+    USISRH = 0;
 }
 
 void sleep(uint16_t ms)
@@ -145,27 +147,69 @@ void lcd_init(void)
 #endif
 }
 
-volatile uint16_t usi_data = 0;
+volatile uint16_t usi_state = 0;
+volatile uint16_t usi_a = 0;
+volatile uint16_t usi_b = 0;
 int main()
 {
     WDTCTL = WDTPW + WDTHOLD;
     lcd_init();
     i2c_init();
+    _BIS_SR(GIE);
     for(;;)
     {
-        volatile unsigned int i = 60000;
-        //P2OUT ^= 0x80;
-        do(i--);
-        while(i != 0);
-        if(usi_data == 1)
-            lcd_data('X');
+        if(usi_b != 0)
+        {
+            lcd_data(usi_b);
+            usi_b = 0;
+        }
     }
     return 0;
 }
 
-interrupt(USI_VECTOR) usi_rx(void)
+interrupt(USI_VECTOR) usi_interrupt(void)
 {
-    usi_data += 1;
-    USICTL1 &= ~USIIFG;
+    if( USICTL1 & USISTTIFG ) // START received....
+    {
+        USICTL1&= ~USISTTIFG;           // Clear START flag...
+        usi_state = 1;
+        USICNT= 0x08;                   // 8 bits
+        USICTL1|= USIIE;                // Enable Counter Interrupt
+        return;
+    }
+    if(usi_state == 1)
+    {
+        usi_a = USISRL;
+        USICTL0|= USIOE;            //Take SDA to ack
+        USICNT= 0x01 | USISCLREL;   //One bit to ack
+        usi_state = 2;
+        return;
+    }
+    if(usi_state == 2)
+    {
+        USICTL1&= ~USIIFG;
+        USICTL0&= ~USIOE;
+        USICNT= 0x08;
+        usi_state = 3;
+        return;
+    }
+    if(usi_state == 3)
+    {
+        usi_b = USISRL;
+        USISRL= 0;                  //Zero to ack
+        USICTL0|= USIOE;            //Take SDA to ack
+        USICNT= 0x01 | USISCLREL;   //One bit to ack
+        usi_state = 4;
+        return;
+    }
+    if(usi_state == 4)
+    {
+        USICTL0&= ~USIOE;
+        USICTL1&= ~USIIFG;
+        USICTL1&= ~USIIE;
+        USICTL1&= ~USISTP;
+        USICNT = (USICNT & 0xE0) + NUM_OF_BYTE;
+        usi_state = 5;
+    }
 }
 

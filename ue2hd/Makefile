@@ -3,6 +3,7 @@ PROJ	= ue2hd
 
 CC		= msp430-gcc
 OBJCOPY	= msp430-objcopy
+READELF	= msp430-readelf
 
 PWD		= $(shell pwd)
 BUILDDIR = $(PWD)/build
@@ -33,6 +34,7 @@ $(BUILDDIR) $(OBJDIR):
 
 %.elf: $(OBJS)
 	$(CC) $(OBJS) $(LDFLAGS) $(LIBS) -o $@
+	$(READELF) -s $@ > $(@:.elf=.symtab)
 
 $(C_OBJS) : $(OBJDIR)/%.o : %.c Makefile *.h
 	@echo $<
