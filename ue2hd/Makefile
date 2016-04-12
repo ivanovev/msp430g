@@ -12,10 +12,10 @@ OBJDIR	= $(BUILDDIR)/obj
 MCU		= msp430g2131
 C_SRCS	= ue2hd.c
 INCLUDES = -IInclude
-CFLAGS	= -mmcu=$(MCU) -g -Os -Wall -Wunused $(INCLUDES)
+CFLAGS	= -mmcu=$(MCU) -Os -Wall -Wunused $(INCLUDES)
 LDFLAGS	= -mmcu=$(MCU) -Wl,-Map=$(BUILDDIR)/$(PROJ).map
 
-OUTFILES = $(BUILDDIR)/$(PROJ).elf $(BUILDDIR)/$(PROJ).hex
+OUTFILES = $(BUILDDIR)/$(PROJ).elf $(BUILDDIR)/$(PROJ).hex $(BUILDDIR)/$(PROJ).bin
 
 C_OBJS  = $(addprefix $(OBJDIR)/, $(notdir $(C_SRCS:.c=.o)))
 OBJS	= $(C_OBJS)
@@ -28,6 +28,10 @@ $(OBJS): | $(OBJDIR)
 
 $(BUILDDIR) $(OBJDIR):
 	@mkdir -p $(OBJDIR)
+
+%.bin: %.elf
+	@$(OBJCOPY) --keep-file-symbols -O binary $< $@
+	@wc -c $(BUILDDIR)/$(PROJ).bin
 
 %.hex: %.elf
 	$(OBJCOPY) -O ihex $< $@

@@ -4,22 +4,26 @@
 #include "ue2hd.h"
 #include <stdint.h>
 
-#define NUM_OF_BYTE 0x1F
+#define USISTATE_ADDR   (1 << 0)
+#define USISTATE_ACK    (1 << 1)
+#define USISTATE_IN     (1 << 2)
+#define USISTATE_OUT    (1 << 3)
+
+#define Q_SZ            40
+struct Queue {
+    volatile uint16_t head, tail;
+    uint8_t q[Q_SZ];
+} q1;
 
 void i2c_init(void)
 {
-    _DINT();
-    //P1OUT &= ~(SDA_PIN + SCL_PIN);
-    //P1REN |= (SDA_PIN + SCL_PIN);
     USICTL0 = USIPE6+USIPE7+USISWRST;    // Port & USI mode setup
     USICTL1 = USII2C+USISTTIE;     // Enable I2C mode & USI interrupts
     USICKCTL = USICKPL;                  // Setup clock polarity
     USICNT |= USISCLREL;  // Disable automatic clear control
     USICTL0 &= ~USISWRST;                // Enable USI
     USICTL1 &= ~USIIFG;                  // Clear pending flag
-    _EINT();
-    USICTL0 &= ~USIOE;
-    USICNT = (USICNT & 0xE0) + NUM_OF_BYTE;
+    USICNT = (USICNT & 0xE0) + 0x1F;
     USISRL = 0;
     USISRH = 0;
 }
@@ -41,103 +45,82 @@ void lcd_clk(void)
     sleep(1);
 }
 
-void lcd_data(uint8_t chr)
+#define HD_PIN(c, mask, pin) do { \
+    if(c & mask) \
+        P1OUT |= pin; \
+    else \
+        P1OUT &= ~pin; \
+} while(0)
+
+void lcd_d(uint8_t chr)
 {
-    P2OUT |= HD_RS;
-    if(chr & 0x80)
-        P1OUT |= HD_D7;
-    else
-        P1OUT &= ~HD_D7;
-    if(chr & 0x40)
-        P1OUT |= HD_D6;
-    else
-        P1OUT &= ~HD_D6;
-    if(chr & 0x20)
-        P1OUT |= HD_D5;
-    else
-        P1OUT &= ~HD_D5;
-    if(chr & 0x10)
-        P1OUT |= HD_D4;
-    else
-        P1OUT &= ~HD_D4;
+    HD_PIN(chr, 0x08, HD_D7);
+    HD_PIN(chr, 0x04, HD_D6);
+    HD_PIN(chr, 0x02, HD_D5);
+    HD_PIN(chr, 0x01, HD_D4);
     lcd_clk();
-    if(chr & 0x08)
-        P1OUT |= HD_D7;
-    else
-        P1OUT &= ~HD_D7;
-    if(chr & 0x04)
-        P1OUT |= HD_D6;
-    else
-        P1OUT &= ~HD_D6;
-    if(chr & 0x02)
-        P1OUT |= HD_D5;
-    else
-        P1OUT &= ~HD_D5;
-    if(chr & 0x01)
-        P1OUT |= HD_D4;
-    else
-        P1OUT &= ~HD_D4;
-    lcd_clk();
-    P2OUT &= ~HD_RS;
 }
+
+void lcd_data(uint8_t chr, uint8_t rs)
+{
+    if(rs)
+        P2OUT |= HD_RS;
+    lcd_d(chr >> 4);
+    lcd_d(chr);
+    P2OUT &= ~HD_RS;
+    sleep(1);
+}
+
+#if 0
+uint16_t lcd_bf(void)
+{
+    uint16_t bf = 0;
+    P1DIR &= ~(HD_D4 + HD_D5 + HD_D6 + HD_D7);
+    P1OUT |= HD_RW;
+    P2OUT &= ~HD_RS;
+    P1OUT |= HD_E;
+    sleep(1);
+    bf = (P1IN & HD_D7);
+    P1OUT &= ~HD_E;
+    sleep(1);
+    P1OUT |= HD_E;
+    sleep(1);
+    P1OUT &= ~HD_E;
+    sleep(1);
+    P1OUT &= ~HD_RW;
+    P1DIR |= (HD_D4 + HD_D5 + HD_D6 + HD_D7);
+    return bf;
+}
+#endif
 
 void lcd_init(void)
 {
     sleep(15);
     P1DIR |= (HD_E + HD_RW + HD_D4 + HD_D5 + HD_D6 + HD_D7);
-    P1OUT |= (HD_D4 + HD_D5);
-    P1OUT &= ~(HD_E + HD_RW + HD_D6 + HD_D7);
+    P1OUT &= ~(HD_E + HD_RW);
     P2SEL &= ~(HD_BL + HD_RS);
     P2DIR |= (HD_BL + HD_RS);
     P2OUT &= ~(HD_BL + HD_RS);
-    lcd_clk();
-    sleep(5);
-    lcd_clk();
-    sleep(5);
-    lcd_clk();
-    sleep(5);
 
-    P1OUT &= ~HD_D4;
-    lcd_clk();
+    lcd_d(0x3);
     sleep(5);
+    lcd_clk();
+    lcd_clk();
+
+    lcd_d(0x2);
 
     // Function set
-    P1OUT &= ~(HD_D4 + HD_D5 + HD_D6 + HD_D7);
-    lcd_clk();
-    P1OUT |= (HD_D7 + HD_D6);
-    lcd_clk();
-    sleep(5);
+    lcd_data(0x0C, 0);
 
     // Display on/off
-    P1OUT &= ~(HD_D4 + HD_D5 + HD_D6 + HD_D7);
-    lcd_clk();
-    //P1OUT |= (HD_D7 + HD_D6 + HD_D5 + HD_D4);
-    P1OUT |= (HD_D7 + HD_D6 + HD_D5 + HD_D4);
-    lcd_clk();
-    sleep(5);
+    lcd_data(0x0C, 0);
 
     // Display clear
-    P1OUT &= ~(HD_D4 + HD_D5 + HD_D6 + HD_D7);
-    lcd_clk();
-    P1OUT |= HD_D4;
-    lcd_clk();
-    sleep(5);
+    lcd_data(0x01, 0);
 
     // Entry mode set
-    P1OUT &= ~(HD_D4 + HD_D5 + HD_D6 + HD_D7);
-    lcd_clk();
-    //P1OUT |= HD_D6;
-    P1OUT |= (HD_D6 + HD_D5);
-    lcd_clk();
-    sleep(5);
+    lcd_data(0x06, 0);
 
-    // write smth
-    lcd_data('A');
-    lcd_data('B');
-    lcd_data('C');
-    lcd_data('D');
-    lcd_data('E');
-    lcd_data('F');
 #if 0
     for(;;)
     {
@@ -148,20 +131,42 @@ void lcd_init(void)
 }
 
 volatile uint16_t usi_state = 0;
-volatile uint16_t usi_a = 0;
-volatile uint16_t usi_b = 0;
+volatile uint16_t usi_addr = 0;
+
 int main()
 {
     WDTCTL = WDTPW + WDTHOLD;
     lcd_init();
     i2c_init();
+    q1.head = 0;
+    q1.tail = 0;
     _BIS_SR(GIE);
+    uint8_t chr = 0;
     for(;;)
     {
-        if(usi_b != 0)
+        if(usi_addr == 0x44)
+            break;
+        if(chr == 17)
         {
-            lcd_data(usi_b);
-            usi_b = 0;
+            lcd_data(0x01, 0);
+            lcd_data(0x02, 0);
+            chr = 0;
+        }
+        sleep(1000);
+        lcd_data('.', 1);
+        chr++;
+    }
+    for(;;)
+    {
+        if(q1.tail != q1.head)
+        {
+            chr = q1.q[q1.tail];
+            q1.tail = ((q1.tail + 1) == Q_SZ) ? 0 : q1.tail + 1;
+            if(chr)
+            {
+                lcd_data(chr, (usi_addr & 0x40) ? 0 : 1);
+                sleep(5);
+            }
         }
     }
     return 0;
@@ -169,47 +174,42 @@ int main()
 
 interrupt(USI_VECTOR) usi_interrupt(void)
 {
-    if( USICTL1 & USISTTIFG ) // START received....
+    if(USICTL1 & USISTTIFG) // START received....
     {
-        USICTL1&= ~USISTTIFG;           // Clear START flag...
-        usi_state = 1;
-        USICNT= 0x08;                   // 8 bits
-        USICTL1|= USIIE;                // Enable Counter Interrupt
+        USICTL1 &= ~USISTTIFG;           // Clear START flag...
+        USICNT = 0x08;                   // 8 bits
+        USICTL1 |= USIIE;                // Enable Counter Interrupt
+        usi_state = USISTATE_ADDR;
+        usi_addr = 0;
         return;
     }
-    if(usi_state == 1)
+    if(usi_state == USISTATE_ADDR)
     {
-        usi_a = USISRL;
-        USICTL0|= USIOE;            //Take SDA to ack
-        USICNT= 0x01 | USISCLREL;   //One bit to ack
-        usi_state = 2;
-        return;
+        usi_addr = USISRL;
+        usi_state &= ~USISTATE_ADDR;
+        usi_state |= USISTATE_IN | USISTATE_ACK;
     }
-    if(usi_state == 2)
+    if(usi_state == USISTATE_IN)
     {
-        USICTL1&= ~USIIFG;
-        USICTL0&= ~USIOE;
-        USICNT= 0x08;
-        usi_state = 3;
-        return;
+        q1.q[q1.head] = USISRL;
+        q1.head = ((q1.head + 1) == Q_SZ) ? 0 : (q1.head + 1);
+        usi_state |= USISTATE_ACK;
     }
-    if(usi_state == 3)
+    if(usi_state & USISTATE_ACK)
     {
-        usi_b = USISRL;
-        USISRL= 0;                  //Zero to ack
-        USICTL0|= USIOE;            //Take SDA to ack
-        USICNT= 0x01 | USISCLREL;   //One bit to ack
-        usi_state = 4;
-        return;
-    }
-    if(usi_state == 4)
-    {
-        USICTL0&= ~USIOE;
-        USICTL1&= ~USIIFG;
-        USICTL1&= ~USIIE;
-        USICTL1&= ~USISTP;
-        USICNT = (USICNT & 0xE0) + NUM_OF_BYTE;
-        usi_state = 5;
+        USISRL = 0;                  //Zero to ack
+        if(USICTL0 & USIOE)
+        {
+            USICTL1 &= ~USIIFG;
+            USICTL0 &= ~USIOE;
+            USICNT = 0x08;
+            usi_state &= ~USISTATE_ACK;
+        }
+        else
+        {
+            USICTL0 |= USIOE;            //Take SDA to ack
+            USICNT = 0x01 | USISCLREL;   //One bit to ack
+        }
     }
 }
 
